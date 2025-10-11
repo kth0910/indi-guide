@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "IndiGuide",
+    "slug": "indi-guide",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#2196F3"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.indiGuide.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "카메라는 조리 과정에서 인덕션과 조리기구를 인식하는데 사용됩니다.",
+        "NSBluetoothAlwaysUsageDescription": "블루투스는 인덕션과 연결하여 안전 기능을 제공하는데 사용됩니다.",
+        "NSBluetoothPeripheralUsageDescription": "블루투스는 인덕션과 연결하여 안전 기능을 제공하는데 사용됩니다."
+      }
+    },
+    "android": {
+      "package": "com.indiguide.app",
+      "permissions": [
+        "CAMERA",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "ACCESS_FINE_LOCATION",
+        "VIBRATE"
+      ]
+    },
+    "plugins": [
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "$(PRODUCT_NAME)에서 카메라 권한이 필요합니다.",
+          "enableCodeScanner": false
+        }
+      ]
+    ]
+  }
+}
+
