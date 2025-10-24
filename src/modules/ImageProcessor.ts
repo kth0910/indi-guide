@@ -53,6 +53,17 @@ interface ImageProcessorModule {
     originalWidth?: number;
     originalHeight?: number;
   }>;
+
+  /**
+   * NMS (Non-Maximum Suppression) 적용
+   * @param boxes 감지된 박스 배열 (각 박스: [x, y, width, height, confidence, class])
+   * @param iouThreshold IOU 임계값
+   * @returns NMS 적용 후 박스 배열
+   */
+  applyNMS(
+    boxes: Array<[number, number, number, number, number, number]>,
+    iouThreshold: number
+  ): Promise<Array<[number, number, number, number, number, number]>>;
 }
 
 const { ImageProcessor } = NativeModules;

@@ -1,12 +1,9 @@
 /**
- * 접근성 서비스 (TTS, 진동)
+ * 접근성 서비스 (TTS)
  */
 
 import * as Speech from 'expo-speech';
-import * as Haptics from 'expo-haptics';
 import { AccessibilitySettings } from '@/types';
-
-type VibrationPattern = 'light' | 'medium' | 'strong';
 
 export class AccessibilityService {
   private static instance: AccessibilityService;
@@ -19,8 +16,6 @@ export class AccessibilityService {
       ttsEnabled: true,
       ttsLanguage: 'ko',
       ttsSpeed: 1.0,
-      vibrationEnabled: true,
-      vibrationIntensity: 'medium',
       largeButtons: true,
       highContrast: false,
     };
@@ -51,7 +46,10 @@ export class AccessibilityService {
    * 음성 안내 (큐 방식으로 처리)
    */
   async speak(message: string, force: boolean = false): Promise<void> {
+    console.log('[ACCESSIBILITY] speak 호출:', message, 'ttsEnabled:', this.settings.ttsEnabled);
+    
     if (!this.settings.ttsEnabled) {
+      console.log('[ACCESSIBILITY] TTS 비활성화됨, 스킵');
       return;
     }
 
@@ -141,45 +139,6 @@ export class AccessibilityService {
   stopSpeaking(): void {
     Speech.stop();
     this.isSpeaking = false;
-  }
-
-  /**
-   * 진동 피드백
-   */
-  async vibrate(pattern: VibrationPattern): Promise<void> {
-    if (!this.settings.vibrationEnabled) {
-      return;
-    }
-
-    try {
-      switch (pattern) {
-        case 'light':
-          // 정보성 알림: 짧게 1회
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          break;
-        
-        case 'medium':
-          // 주의: 2회
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          setTimeout(async () => {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          }, 200);
-          break;
-        
-        case 'strong':
-          // 긴급: 길게 연속
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-          setTimeout(async () => {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-          }, 300);
-          setTimeout(async () => {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-          }, 600);
-          break;
-      }
-    } catch (error) {
-      console.error('진동 피드백 실패:', error);
-    }
   }
 
   /**

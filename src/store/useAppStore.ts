@@ -38,6 +38,10 @@ interface AppStore extends AppState {
   latestVisionResult?: VisionResult;
   setLatestVisionResult: (result: VisionResult) => void;
   
+  // 최신 캡쳐 이미지 경로
+  latestCapturedImage?: string;
+  setLatestCapturedImage: (imagePath: string) => void;
+  
   // 접근성 설정
   accessibilitySettings: AccessibilitySettings;
   updateAccessibilitySettings: (settings: Partial<AccessibilitySettings>) => void;
@@ -110,6 +114,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   systemConfig: defaultSystemConfig,
   visionMockMode: APP_CONFIG.VISION_MOCK_MODE, // 초기값은 constants에서
   latestVisionResult: undefined,
+  latestCapturedImage: undefined,
 
   // 액션들
   setCookingState: (state: CookingState) => {
@@ -208,6 +213,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setLatestVisionResult: (result: VisionResult) => {
     set({ latestVisionResult: result });
+  },
+
+  setLatestCapturedImage: (imagePath: string) => {
+    set({ latestCapturedImage: imagePath });
   },
 }));
 

@@ -1,5 +1,5 @@
 /**
- * 비전 인식 서비스 (카메라, YOLOv8, OCR, 마커 감지)
+ * 비전 인식 서비스 (카메라, YOLOv10, OCR, 마커 감지)
  */
 
 import { Camera, useCameraDevice } from 'react-native-vision-camera';
@@ -32,10 +32,10 @@ export class VisionService {
   // ONNX 모델 관련
   private yoloSession?: InferenceSession;
   private modelLoaded: boolean = false;
-  private readonly MODEL_INPUT_SIZE = 640; // YOLOv8 입력 크기
+  private readonly MODEL_INPUT_SIZE = 640; // YOLOv10 입력 크기
   private readonly CONFIDENCE_THRESHOLD = 0.5; // 신뢰도 임계값
   private readonly IOU_THRESHOLD = 0.45; // NMS IOU 임계값
-  private readonly CLASS_NAMES = ['lock', 'timer', 'down', 'up', 'power', 'hand']; // 인덕션 버튼 클래스 (6개)
+  private readonly CLASS_NAMES = ['lock', 'timer', 'down', 'up', 'power', 'fingertip', 'segment']; // 인덕션 버튼 클래스 (6개)
 
   private constructor() {
     this.initializeModel();
@@ -53,7 +53,7 @@ export class VisionService {
    */
   private async initializeModel(): Promise<void> {
     try {
-      console.log('YOLOv8 ONNX 모델 로딩 시작...');
+      console.log('YOLOv10 ONNX 모델 로딩 시작...');
       
       // assets에서 모델 파일 로드
       const modelAsset = Asset.fromModule(require('../../assets/yolo_model.onnx'));
@@ -69,7 +69,7 @@ export class VisionService {
       this.yoloSession = await InferenceSession.create(modelAsset.localUri);
       this.modelLoaded = true;
       
-      console.log('✅ YOLOv8 모델 로딩 완료');
+      console.log('✅ YOLOv10 모델 로딩 완료');
       console.log('입력 이름:', this.yoloSession.inputNames);
       console.log('출력 이름:', this.yoloSession.outputNames);
     } catch (error) {
@@ -312,8 +312,8 @@ export class VisionService {
       
       console.log('[YOLO] 추론 완료, 출력 shape:', outputTensor.dims);
 
-      // 후처리
-      const detections = this.postprocessOutput(
+      // 후처리 (네이티브 NMS 사용)
+      const detections = await this.postprocessOutput(
         outputTensor,
         this.MODEL_INPUT_SIZE,
         this.MODEL_INPUT_SIZE
@@ -353,13 +353,6 @@ export class VisionService {
         onBurner,
         timestamp: Date.now(),
         allDetections: detections,
-        cropInfo: result.cropX !== undefined ? {
-          cropX: result.cropX,
-          cropY: result.cropY,
-          cropSize: result.cropSize,
-          originalWidth: result.originalWidth!,
-          originalHeight: result.originalHeight!,
-        } : undefined,
       };
     } catch (error) {
       console.error('[YOLO] 이미지에서 버튼 감지 실패:', error);
@@ -430,9 +423,9 @@ export class VisionService {
   }
 
   /**
-   * Base64 이미지에서 YOLOv8 추론 실행
+   * Base64 이미지에서 YOLOv10 추론 실행
    */
-  private async runYOLOv8FromBase64(base64Image: string): Promise<YOLODetection[]> {
+  private async runYOLOv10FromBase64(base64Image: string): Promise<YOLODetection[]> {
     if (!this.modelLoaded || !this.yoloSession) {
       console.warn('[YOLO] ONNX 모델이 로드되지 않았습니다.');
       return [];
@@ -453,8 +446,8 @@ export class VisionService {
       const outputTensor = results[this.yoloSession.outputNames[0]];
       console.log('[YOLO] 추론 완료, 출력 shape:', outputTensor.dims);
       
-      // 3. 후처리 (NMS, 좌표 변환)
-      const detections = this.postprocessOutput(
+      // 3. 후처리 (NMS, 좌표 변환) - 네이티브 NMS 사용
+      const detections = await this.postprocessOutput(
         outputTensor,
         640,
         640
@@ -473,9 +466,9 @@ export class VisionService {
   }
 
   /**
-   * YOLOv8 추론 실행 (레거시)
+   * YOLOv10 추론 실행 (레거시)
    */
-  private async runYOLOv8(frame: any): Promise<YOLODetection[]> {
+  private async runYOLOv10(frame: any): Promise<YOLODetection[]> {
     return [];
   }
 
@@ -532,29 +525,76 @@ export class VisionService {
   /**
    * 출력 후처리 (NMS 적용 및 좌표 변환)
    */
-  private postprocessOutput(
+  private async postprocessOutput(
     output: Tensor,
     originalWidth: number,
     originalHeight: number
-  ): YOLODetection[] {
+  ): Promise<YOLODetection[]> {
     const detections: YOLODetection[] = [];
     
     try {
-      // YOLOv8 출력 형식: [1, 84, 8400] or [1, 8400, 84] or [1, 5, 8400] (손 1개 클래스)
+      // YOLOv10 출력 형식: [1, 84, 8400] or [1, 8400, 84] or [1, 5, 8400] (손 1개 클래스)
+      // 또는 [1, N, 6] (NMS가 적용된 형식: x, y, w, h, confidence, class_id)
       const data = output.data as Float32Array;
       const shape = output.dims;
       
       console.log('[YOLO] 후처리 시작, shape:', shape, 'data length:', data.length);
       
+      // [1, N, 6] 형식 (NMS가 이미 적용된 형식) - 새로운 모델
+      if (shape.length === 3 && shape[2] === 6) {
+        const numDetections = shape[1];
+        console.log(`[YOLO] NMS 적용된 모델 감지 [1, ${numDetections}, 6]`);
+        
+        for (let i = 0; i < numDetections; i++) {
+          // 데이터 인덱싱: data[i * 6 + offset]
+          const x1 = data[i * 6 + 0];
+          const y1 = data[i * 6 + 1];
+          const x2 = data[i * 6 + 2];
+          const y2 = data[i * 6 + 3];
+          const confidence = data[i * 6 + 4];
+          const classId = Math.round(data[i * 6 + 5]);
+          
+          // 신뢰도 체크
+          if (confidence > this.CONFIDENCE_THRESHOLD) {
+            // 좌표 변환: x1,y1,x2,y2 -> x,y,w,h
+            const width = x2 - x1;
+            const height = y2 - y1;
+            
+            // 좌표가 정규화되어 있다면 원본 크기로 스케일링
+            const scaleX = originalWidth / this.MODEL_INPUT_SIZE;
+            const scaleY = originalHeight / this.MODEL_INPUT_SIZE;
+            
+            detections.push({
+              bbox: {
+                x: x1 * scaleX,
+                y: y1 * scaleY,
+                width: width * scaleX,
+                height: height * scaleY,
+                centerX: (x1 + width / 2) * scaleX,
+                centerY: (y1 + height / 2) * scaleY,
+              },
+              confidence,
+              class: classId,
+              className: this.CLASS_NAMES[classId] || `class_${classId}`,
+            });
+            
+            console.log(`[YOLO] Detection ${i}: ${this.CLASS_NAMES[classId]} (conf: ${(confidence * 100).toFixed(1)}%)`);
+          }
+        }
+        
+        console.log(`[YOLO] ${detections.length}개 감지됨 (신뢰도 > ${this.CONFIDENCE_THRESHOLD})`);
+        return detections;
+      }
+      
       // 출력 shape에 따라 처리
       let numDetections = 0;
       let numClasses = 0;
       
-      // YOLOv8 출력 형식: [1, N, 8400] where N = 4 + num_classes
+      // YOLOv10 출력 형식: [1, N, 8400] where N = 4 + num_classes
       if (shape.length === 3 && shape[2] === 8400) {
         numDetections = shape[2];
         numClasses = shape[1] - 4;
-        console.log(`[YOLO] YOLOv8 모델 감지 [1, ${shape[1]}, 8400], 클래스 수: ${numClasses}, detections: ${numDetections}`);
+        console.log(`[YOLO] YOLOv10 모델 감지 [1, ${shape[1]}, 8400], 클래스 수: ${numClasses}, detections: ${numDetections}`);
       } else if (shape[1] === 84) {
         // [1, 84, 8400] 형식 (COCO 80 클래스)
         numDetections = shape[2];
@@ -571,19 +611,12 @@ export class VisionService {
       }
       
       // NMS를 위한 임시 배열
-      const boxes: Array<{
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-        confidence: number;
-        class: number;
-      }> = [];
+      const boxes: Array<[number, number, number, number, number, number]> = [];
       
       // 각 detection 처리
       let highConfCount = 0;
       for (let i = 0; i < Math.min(numDetections, 8400); i++) {
-        // YOLOv8 출력: [1, N, 8400] 형식 (N = 4 + num_classes)
+        // YOLOv10 출력: [1, N, 8400] 형식 (N = 4 + num_classes)
         // 데이터는 [cx, cy, w, h, class1_conf, class2_conf, ...] 순서로 각 detection마다 배열됨
         // 인덱싱: data[feature_idx * numDetections + detection_idx]
         
@@ -618,36 +651,38 @@ export class VisionService {
           const scaleX = originalWidth / this.MODEL_INPUT_SIZE;
           const scaleY = originalHeight / this.MODEL_INPUT_SIZE;
           
-          boxes.push({
-            x: (cx - w / 2) * scaleX,
-            y: (cy - h / 2) * scaleY,
-            width: w * scaleX,
-            height: h * scaleY,
-            confidence: maxConfidence,
-            class: maxClass,
-          });
+          boxes.push([
+            (cx - w / 2) * scaleX,  // x
+            (cy - h / 2) * scaleY,  // y
+            w * scaleX,             // width
+            h * scaleY,             // height
+            maxConfidence,          // confidence
+            maxClass                // class
+          ]);
         }
       }
       
       console.log(`[YOLO] 신뢰도 > 0.3: ${highConfCount}개, 신뢰도 > ${this.CONFIDENCE_THRESHOLD}: ${boxes.length}개`);
       
-      // NMS (Non-Maximum Suppression) 적용
-      const nmsBoxes = this.applyNMS(boxes, this.IOU_THRESHOLD);
+      // 네이티브 NMS 적용 (최적화)
+      const nmsBoxes = await ImageProcessor.applyNMS(boxes, this.IOU_THRESHOLD);
+      console.log(`[YOLO] NMS 후: ${nmsBoxes.length}개 (네이티브 처리)`);
       
       // 최종 detection 형식으로 변환
       for (const box of nmsBoxes) {
+        const [x, y, width, height, confidence, classId] = box;
         detections.push({
           bbox: {
-            x: box.x,
-            y: box.y,
-            width: box.width,
-            height: box.height,
-            centerX: box.x + box.width / 2,
-            centerY: box.y + box.height / 2,
+            x,
+            y,
+            width,
+            height,
+            centerX: x + width / 2,
+            centerY: y + height / 2,
           },
-          confidence: box.confidence,
-          class: box.class,
-          className: this.CLASS_NAMES[box.class] || `class_${box.class}`,
+          confidence,
+          class: classId,
+          className: this.CLASS_NAMES[classId] || `class_${classId}`,
         });
       }
     } catch (error) {
@@ -658,65 +693,10 @@ export class VisionService {
   }
 
   /**
-   * NMS (Non-Maximum Suppression) 구현
+   * NMS (Non-Maximum Suppression) 구현 - 네이티브 모듈로 이동됨
+   * 이 메서드는 더 이상 사용되지 않으며, ImageProcessor.applyNMS를 사용합니다.
+   * @deprecated Use ImageProcessor.applyNMS instead
    */
-  private applyNMS(
-    boxes: Array<{
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-      confidence: number;
-      class: number;
-    }>,
-    iouThreshold: number
-  ): Array<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    confidence: number;
-    class: number;
-  }> {
-    // 신뢰도 순으로 정렬
-    const sorted = boxes.sort((a, b) => b.confidence - a.confidence);
-    const selected: typeof boxes = [];
-    
-    while (sorted.length > 0) {
-      const current = sorted.shift()!;
-      selected.push(current);
-      
-      // IOU가 높은 박스 제거
-      for (let i = sorted.length - 1; i >= 0; i--) {
-        const iou = this.calculateIOU(current, sorted[i]);
-        if (iou > iouThreshold && current.class === sorted[i].class) {
-          sorted.splice(i, 1);
-        }
-      }
-    }
-    
-    return selected;
-  }
-
-  /**
-   * IOU (Intersection over Union) 계산
-   */
-  private calculateIOU(
-    box1: { x: number; y: number; width: number; height: number },
-    box2: { x: number; y: number; width: number; height: number }
-  ): number {
-    const x1 = Math.max(box1.x, box2.x);
-    const y1 = Math.max(box1.y, box2.y);
-    const x2 = Math.min(box1.x + box1.width, box2.x + box2.width);
-    const y2 = Math.min(box1.y + box1.height, box2.y + box2.height);
-    
-    const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-    const area1 = box1.width * box1.height;
-    const area2 = box2.width * box2.height;
-    const union = area1 + area2 - intersection;
-    
-    return union > 0 ? intersection / union : 0;
-  }
 
   private transformPoint(point: { x: number; y: number }): { x: number; y: number } {
     // TODO: 호모그래피로 좌표 변환

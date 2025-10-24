@@ -3,10 +3,10 @@
  */
 
 import React, { useEffect } from 'react';
-import { StatusBar, LogBox } from 'react-native';
+import { StatusBar, LogBox, PermissionsAndroid, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AppNavigator } from '@/navigation/AppNavigator';
-import { BLEService } from '@/services/BLEService';
+import { BluetoothClassicService } from '@/services/BluetoothClassicService';
 import { AccessibilityService } from '@/services/AccessibilityService';
 import { useAppStore } from '@/store/useAppStore';
 
@@ -19,22 +19,51 @@ LogBox.ignoreLogs([
 const App: React.FC = () => {
   const { setBleConnected, setCameraReady } = useAppStore();
   
-  const bleService = BLEService.getInstance();
+  const bluetoothService = BluetoothClassicService.getInstance();
   const accessibilityService = AccessibilityService.getInstance();
 
   useEffect(() => {
     // 앱 초기화
     const initialize = async () => {
-      // BLE 초기화
-      const bleInitialized = await bleService.initialize();
-      if (bleInitialized) {
-        // 자동 스캔 및 연결
-        const connected = await bleService.scanAndConnect(
+      // Android 12+ 블루투스 권한 요청
+      if (Platform.OS === 'android' && Platform.Version >= 31) {
+        try {
+          const granted = await PermissionsAndroid.requestMultiple([
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          ]);
+          
+          console.log('[App] 블루투스 권한 요청 결과:', granted);
+          
+          const allGranted = Object.values(granted).every(
+            (result) => result === PermissionsAndroid.RESULTS.GRANTED
+          );
+          
+          if (!allGranted) {
+            console.warn('[App] 일부 블루투스 권한이 거부되었습니다.');
+          }
+        } catch (error) {
+          console.error('[App] 블루투스 권한 요청 실패:', error);
+        }
+      }
+      
+      // 블루투스 초기화
+      const bluetoothInitialized = await bluetoothService.initialize();
+      if (bluetoothInitialized) {
+        // indiguide 블루투스 자동 스캔 및 연결
+        const connected = await bluetoothService.scanAndConnect(
           (deviceName) => {
-            console.log('디바이스 발견:', deviceName);
+            console.log('[App] indiguide 디바이스 발견:', deviceName);
           }
         );
         setBleConnected(connected);
+        
+        if (connected) {
+          console.log('[App] indiguide 연결 성공');
+        } else {
+          console.warn('[App] indiguide 연결 실패 - 페어링을 확인하세요');
+        }
       }
 
       // 카메라는 HomeScreen 또는 CookingScreen에서 초기화
@@ -46,7 +75,7 @@ const App: React.FC = () => {
 
     // 정리
     return () => {
-      bleService.cleanup();
+      bluetoothService.cleanup();
       accessibilityService.cleanup();
     };
   }, []);

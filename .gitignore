@@ -22,24 +22,15 @@ web-build/
 *.ipa
 *.apk
 
-# Android
-android/build/
-android/app/build/
-android/.gradle/
-android/captures/
-android/gradlew
-android/gradlew.bat
-android/local.properties
+# Android (Prebuild - managed by Expo)
+android/
 *.iml
 *.hprof
 .cxx/
 .externalNativeBuild/
 
-# iOS
-ios/Pods/
-ios/*.xcworkspace
-ios/*.xcodeproj
-ios/build/
+# iOS (Prebuild - managed by Expo)
+ios/
 *.pbxuser
 !default.pbxuser
 *.mode1v3

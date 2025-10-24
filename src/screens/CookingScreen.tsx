@@ -2,7 +2,7 @@
  * 조리 화면 - 실시간 모니터링 및 경보
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,15 +12,16 @@ import {
   Alert,
   Dimensions,
   PixelRatio,
+  Image,
 } from 'react-native';
 import { Camera } from 'react-native-vision-camera';
 import { useAppStore } from '@/store/useAppStore';
 import { useVisionCamera } from '@/hooks/useVisionCamera';
-import { BLEService } from '@/services/BLEService';
+import { BluetoothClassicService } from '@/services/BluetoothClassicService';
 import { SafetyService } from '@/services/SafetyService';
 import { AccessibilityService } from '@/services/AccessibilityService';
 import { CookingState, VisionResult, SensorPacket } from '@/types';
-import { BURNER_NAMES, APP_CONFIG } from '@/utils/constants';
+import { APP_CONFIG } from '@/utils/constants';
 
 const { width: SCREEN_WIDTH_DP, height: SCREEN_HEIGHT_DP } = Dimensions.get('window');
 const PIXEL_RATIO = PixelRatio.get();
@@ -44,6 +45,8 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
     currentAlerts,
     systemConfig,
     latestVisionResult,
+    latestCapturedImage,
+    accessibilitySettings,
     setCookingState,
     updateBurner,
     addAlert,
@@ -52,10 +55,18 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
   } = useAppStore();
 
   const [isMonitoring, setIsMonitoring] = useState(false);
+  const [currentTemp, setCurrentTemp] = useState<number>(0);
+  const [tempState, setTempState] = useState<'safe' | 'hot'>('safe');
   
-  const bleService = BLEService.getInstance();
+  const bluetoothService = BluetoothClassicService.getInstance();
   const safetyService = SafetyService.getInstance();
   const accessibilityService = AccessibilityService.getInstance();
+
+  // AccessibilityService 설정 동기화
+  useEffect(() => {
+    console.log('[CookingScreen] AccessibilityService 설정 동기화:', accessibilitySettings);
+    accessibilityService.updateSettings(accessibilitySettings);
+  }, [accessibilitySettings]);
 
   // 비전 처리 결과 핸들러
   const handleVisionResult = (result: VisionResult) => {
@@ -104,59 +115,66 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
   // 카메라 Hook
   const { device, isReady, frameProcessor, cameraRef } = useVisionCamera(handleVisionResult);
 
-  // BLE 데이터 수신 핸들러
-  useEffect(() => {
+  // 블루투스 데이터 수신 콜백 (useCallback으로 안정적인 참조 유지)
+  const handleBluetoothData = useCallback((packet: SensorPacket) => {
     try {
-      bleService.onDataReceived((packet: SensorPacket) => {
-        try {
-          // 온도 데이터로 버너 상태 업데이트
-          if (packet?.temperature?.burners) {
-            Object.entries(packet.temperature.burners).forEach(([position, temp]) => {
-              if (temp !== undefined) {
-                updateBurner(position as any, {
-                  temperature: temp,
-                  hasResidualHeat: temp >= systemConfig.residualHeatThreshold,
-                });
-              }
-            });
+      console.log('[CookingScreen] 📡 블루투스 데이터 수신:', JSON.stringify(packet));
+      
+      // 온도 데이터 처리
+      if (packet?.temperature) {
+        // 온도 값 저장
+        let temp = packet.temperature.centerTemp || 0;
+        
+        // centerTemp가 없으면 burners 중 첫 번째 값 사용
+        if (!temp && packet.temperature.burners) {
+          const temps = Object.values(packet.temperature.burners).filter(t => t !== undefined);
+          if (temps.length > 0) {
+            temp = temps[0] as number;
           }
-
-          // 안전 체크
-          if (packet?.temperature) {
-            const residualAlerts = safetyService.checkResidualHeat(burners, systemConfig);
-            residualAlerts.forEach(alert => addAlert(alert));
-
-            const overheatingAlerts = safetyService.checkOverheating(
-              packet.temperature,
-              systemConfig
-            );
-            overheatingAlerts.forEach(alert => addAlert(alert));
-          }
-        } catch (error) {
-          console.error('[CookingScreen] BLE 데이터 처리 에러:', error);
         }
-      });
-    } catch (error) {
-      console.error('[CookingScreen] BLE 초기화 에러:', error);
-    }
-
-    // 무조작 모니터링 시작
-    try {
-      safetyService.startInactivityMonitor(systemConfig, () => {
-        // 무조작 경고 콜백
-      });
-    } catch (error) {
-      console.error('[CookingScreen] 무조작 모니터링 시작 에러:', error);
-    }
-
-    return () => {
-      try {
-        safetyService.stopInactivityMonitor();
-      } catch (error) {
-        console.error('[CookingScreen] 무조작 모니터링 중지 에러:', error);
+        
+        console.log('[CookingScreen] 현재 온도:', temp);
+        setCurrentTemp(temp);
+        
+        // ⭐ Arduino에서 전송한 state 값으로만 판단
+        if (packet.temperature.state) {
+          console.log('[CookingScreen] ✅ Arduino state:', packet.temperature.state);
+          setTempState(packet.temperature.state);
+        } else {
+          console.warn('[CookingScreen] ⚠️ state 정보 없음, 기본값 safe 사용');
+          setTempState('safe');
+        }
+        
+        // 버너 상태 업데이트 (기존 로직 유지)
+        if (packet.temperature.burners) {
+          console.log('[CookingScreen] 버너 온도:', packet.temperature.burners);
+          Object.entries(packet.temperature.burners).forEach(([position, temp]) => {
+            if (temp !== undefined) {
+              updateBurner(position as any, {
+                temperature: temp,
+                hasResidualHeat: temp >= systemConfig.residualHeatThreshold,
+              });
+            }
+          });
+        }
       }
-    };
-  }, [burners, systemConfig]);
+    } catch (error) {
+      console.error('[CookingScreen] 블루투스 데이터 처리 에러:', error);
+    }
+  }, [burners, systemConfig, updateBurner, addAlert, safetyService]);
+
+  // 블루투스 데이터 수신 핸들러 등록
+  useEffect(() => {
+    console.log('[CookingScreen] 블루투스 데이터 수신 핸들러 등록');
+    
+    try {
+      bluetoothService.onDataReceived(handleBluetoothData);
+      console.log('[CookingScreen] ✅ 콜백 등록 완료');
+      console.log('[CookingScreen] 블루투스 연결 상태:', bluetoothService.getConnectionStatus());
+    } catch (error) {
+      console.error('[CookingScreen] 블루투스 초기화 에러:', error);
+    }
+  }, [handleBluetoothData, safetyService, systemConfig]);
 
   const handleEndCooking = () => {
     Alert.alert(
@@ -186,20 +204,28 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      {/* 카메라 뷰 - 정사각형으로 제한 */}
+      {/* 백그라운드 카메라 (숨김 - 캡쳐만 수행) */}
+      {device && (
+        <Camera
+          ref={cameraRef}
+          style={styles.hiddenCamera}
+          device={device}
+          isActive={true}
+          photo={true}
+        />
+      )}
+      
+      {/* 캡쳐된 이미지 뷰 - 정사각형으로 제한 */}
       <View style={styles.cameraContainer}>
-        {device ? (
-          <Camera
-            ref={cameraRef}
+        {latestCapturedImage ? (
+          <Image
+            source={{ uri: latestCapturedImage }}
             style={styles.squareCamera}
-            device={device}
-            isActive={true}
-            photo={true}
             resizeMode="cover"
           />
         ) : (
           <View style={[styles.squareCamera, styles.mockCamera]}>
-            <Text style={styles.mockCameraText}>카메라 준비 중...</Text>
+            <Text style={styles.mockCameraText}>이미지 로딩 중...</Text>
           </View>
         )}
       </View>
@@ -222,6 +248,10 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
             const labelHeight = 20; // 레이블 높이 추정
             const labelTop = Math.max(2, top - labelHeight - 2); // 화면 상단 여백 2dp
             
+            // 강조 색상 (손이 버튼 아래에 있을 때 보라색, 기본은 초록색)
+            const boxColor = detection.highlightColor || '#00FF00';
+            const isHighlighted = !!detection.highlightColor;
+            
             console.log(`[UI] ${detection.className}: ${left.toFixed(0)}, ${top.toFixed(0)} (${width.toFixed(0)}x${height.toFixed(0)})`);
             
             return (
@@ -235,6 +265,10 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
                       top,
                       width,
                       height,
+                      borderColor: boxColor,
+                      backgroundColor: isHighlighted 
+                        ? 'rgba(156, 39, 176, 0.1)'  // 보라색 반투명
+                        : 'rgba(0, 255, 0, 0.05)',   // 초록색 반투명
                     },
                   ]}
                 />
@@ -249,7 +283,13 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
                     },
                   ]}
                 >
-                  <Text style={styles.boundingBoxLabel}>
+                  <Text style={[
+                    styles.boundingBoxLabel,
+                    {
+                      backgroundColor: boxColor,
+                      color: isHighlighted ? '#FFFFFF' : '#000000',
+                    }
+                  ]}>
                     {detection.className} {(detection.confidence * 100).toFixed(0)}%
                   </Text>
                 </View>
@@ -275,30 +315,31 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
 
         {/* 하단: 상태 카드와 종료 버튼 */}
         <View style={styles.bottomContainer}>
-          {/* YOLO 인식 현황 */}
+          {/* 블루투스 온도 및 YOLO 인식 현황 */}
           <View style={styles.visionStatusContainer}>
-            {/* 카메라 포즈 상태 */}
-            {latestVisionResult?.pose && (
-              <View style={[
-                styles.statusCard,
-                latestVisionResult.pose.status === 'OK' && styles.statusCardGood,
-                latestVisionResult.pose.status === 'WARNING' && styles.statusCardWarning,
-                latestVisionResult.pose.status === 'FAIL' && styles.statusCardError,
-              ]}>
-                <Text style={styles.statusLabel}>카메라 포즈</Text>
-                <Text style={styles.statusValue}>
-                  {latestVisionResult.pose.status === 'OK' ? '✓ 정상' :
-                   latestVisionResult.pose.status === 'WARNING' ? '⚠ 주의' :
-                   '✗ 불량'}
-                </Text>
-                <Text style={styles.statusDetail}>
-                  마커: {latestVisionResult.pose.markerCount}개
-                </Text>
-                <Text style={styles.statusDetail}>
-                  오차: {latestVisionResult.pose.reprojectionError.toFixed(2)}
-                </Text>
-              </View>
-            )}
+            {/* 블루투스 온도 데이터 */}
+            <View style={[
+              styles.statusCard,
+              bluetoothService.getConnectionStatus() ? styles.statusCardGood : styles.statusCardError,
+              tempState === 'safe' ? styles.statusBorderSafe : styles.statusBorderHot,
+            ]}>
+              <Text style={styles.statusLabel}>인덕션 온도</Text>
+              {bluetoothService.getConnectionStatus() ? (
+                <>
+                  <Text style={[
+                    styles.statusValue,
+                    tempState === 'hot' && styles.statusValueHot,
+                  ]}>
+                    {currentTemp > 0 ? `${currentTemp.toFixed(1)}°C` : '대기 중...'}
+                  </Text>
+                  <Text style={styles.statusDetail}>
+                    상태: {tempState === 'safe' ? '✓ 안전' : '⚠ 뜨거움'}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.statusValue}>✗ 연결 안됨</Text>
+              )}
+            </View>
 
             {/* 버튼 감지 상태 (YOLO) */}
             <View style={[
@@ -347,6 +388,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
+  hiddenCamera: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
   cameraContainer: {
     width: SCREEN_WIDTH_DP,
     height: SCREEN_WIDTH_DP, // 정사각형 (dp 단위)
@@ -355,7 +402,6 @@ const styles = StyleSheet.create({
   squareCamera: {
     width: SCREEN_WIDTH_DP,
     height: SCREEN_WIDTH_DP, // 정사각형 (dp 단위)
-    transform: [{ scale: 0.75 }], // center crop 비율에 맞춤 (3060/4080)
   },
   camera: {
     flex: 1,
@@ -434,6 +480,14 @@ const styles = StyleSheet.create({
   statusCardError: {
     borderColor: '#F44336',
   },
+  statusBorderSafe: {
+    borderColor: '#4CAF50',
+    borderWidth: 3,
+  },
+  statusBorderHot: {
+    borderColor: '#F44336',
+    borderWidth: 3,
+  },
   statusLabel: {
     fontSize: 12,
     fontWeight: '600',
@@ -446,6 +500,9 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#1A1A1A',
     marginBottom: 8,
+  },
+  statusValueHot: {
+    color: '#F44336',
   },
   statusDetail: {
     fontSize: 12,

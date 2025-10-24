@@ -44,6 +44,7 @@ export interface TemperatureData {
   };
   ambientTemp: number;              // 주변온
   isOverheating: boolean;           // 과열 여부
+  state?: 'safe' | 'hot';           // 온도 상태 (Arduino에서 전송)
 }
 
 // OCR 인식 결과
@@ -68,6 +69,7 @@ export interface YOLODetection {
   confidence: number;
   class: number;
   className: string;
+  highlightColor?: string;  // 특별히 강조할 색상 (예: 손이 버튼 아래에 있을 때)
 }
 
 // 손 인식 결과 (실제로는 버튼 감지)
@@ -153,8 +155,6 @@ export interface AccessibilitySettings {
   ttsEnabled: boolean;
   ttsLanguage: 'ko' | 'en';
   ttsSpeed: number;                 // 0.5 - 2.0
-  vibrationEnabled: boolean;
-  vibrationIntensity: 'light' | 'medium' | 'strong';
   largeButtons: boolean;
   highContrast: boolean;
 }

@@ -4,10 +4,12 @@
 
 export const APP_CONFIG = {
   // 목업 모드 설정
-  BLE_MOCK_MODE: true, // true로 설정하면 실제 블루투스 없이 테스트 가능
-  VISION_MOCK_MODE: true, // true로 설정하면 실제 카메라 없이 테스트 가능
+  BLE_MOCK_MODE: false, // true: 목업 데이터 사용 | false: 실제 HC-06 연결
+  VISION_MOCK_MODE: false, // true: 목업 비전 사용 | false: 실제 카메라 사용
   
-  // BLE 설정
+  // HC-06 블루투스 클래식 설정
+  // HC-06 모듈은 Bluetooth Classic (SPP)을 사용합니다
+  // 아래 UUID는 BLE용이므로 HC-06에서는 사용되지 않습니다 (하위 호환성 유지)
   BLE_SERVICE_UUID: '0000ffe0-0000-1000-8000-00805f9b34fb',
   BLE_CHARACTERISTIC_UUID: '0000ffe1-0000-1000-8000-00805f9b34fb',
   BLE_SCAN_TIMEOUT: 10000, // 10초
@@ -19,7 +21,7 @@ export const APP_CONFIG = {
     height: 720,
   },
   
-  // YOLOv8 설정
+  // YOLOv10 설정
   YOLO_MODEL_PATH: '../../assets/yolo_model.onnx',
   YOLO_INPUT_SIZE: 640,
   YOLO_CONFIDENCE_THRESHOLD: 0.5,
@@ -36,7 +38,6 @@ export const APP_CONFIG = {
   
   // 타이머
   SAFE_TEMP_DURATION: 60000, // 60초
-  INACTIVITY_WARNING_TIME: 600000, // 10분
   
   // 음성 안내 간격
   INFO_ANNOUNCEMENT_INTERVAL: 5000, // 5초
@@ -44,28 +45,16 @@ export const APP_CONFIG = {
   EMERGENCY_ANNOUNCEMENT_INTERVAL: 1000, // 1초 (연속)
 };
 
-export const BURNER_NAMES = {
-  FRONT_LEFT: '좌측 전면 버너',
-  FRONT_RIGHT: '우측 전면 버너',
-  REAR_LEFT: '좌측 후면 버너',
-  REAR_RIGHT: '우측 후면 버너',
-};
-
 export const ALERT_MESSAGES = {
-  RESIDUAL_HEAT: (burner: string) => `${burner}에 잔열이 감지됩니다. 손을 올리지 마세요.`,
-  OVERHEATING: (burner: string) => `${burner}가 과열되고 있습니다. 주의하세요.`,
-  HAND_ON_BURNER: (burner: string) => `주의! 손이 ${burner} 위에 있습니다.`,
-  INACTIVITY: '장시간 조작이 없습니다. 조리 상태를 확인하세요.',
+  RESIDUAL_HEAT: '버너에 열이 감지됩니다. 손을 올리지 마세요.',
   BLE_DISCONNECTED: '하드웨어 연결이 끊어졌습니다. 재연결을 시도합니다.',
-  CAMERA_ERROR: '카메라가 기울어져 있습니다. 상판 중앙을 다시 맞춰주세요.',
-  SENSOR_ERROR: '센서에 문제가 발생했습니다. 청소하거나 교체가 필요합니다.',
 };
 
 export const BUTTON_NAMES: { [key: string]: string } = {
-  POWER: '전원 버튼',
-  PLUS: '출력 증가 버튼',
-  MINUS: '출력 감소 버튼',
-  TIMER: '타이머 버튼',
-  LOCK: '잠금 버튼',
+  power: '전원 버튼',
+  up: '출력 증가 버튼',
+  down: '출력 감소 버튼',
+  timer: '타이머 버튼',
+  lock: '잠금 버튼',
 };
 
