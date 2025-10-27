@@ -64,6 +64,34 @@ interface ImageProcessorModule {
     boxes: Array<[number, number, number, number, number, number]>,
     iouThreshold: number
   ): Promise<Array<[number, number, number, number, number, number]>>;
+
+  /**
+   * 회전되고 crop된 이미지를 파일로 저장
+   * @param imageUri 원본 이미지 URI
+   * @param orientation 이미지 orientation
+   * @param outputPath 출력 경로
+   * @param cropInfo crop 정보
+   * @returns 저장된 이미지 경로
+   */
+  saveRotatedCroppedImage(
+    imageUri: string,
+    orientation: string,
+    outputPath: string,
+    cropInfo: { cropX: number; cropY: number; cropSize: number }
+  ): Promise<string>;
+
+  /**
+   * 바운딩 박스가 그려진 디버그 이미지 생성
+   * @param imageUri 원본 이미지 URI
+   * @param detections 감지된 객체 배열
+   * @param outputPath 출력 이미지 경로
+   * @returns 생성된 이미지 경로
+   */
+  drawBoundingBoxes(
+    imageUri: string,
+    detections: Array<any>,
+    outputPath: string
+  ): Promise<string>;
 }
 
 const { ImageProcessor } = NativeModules;

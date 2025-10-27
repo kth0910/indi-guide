@@ -76,18 +76,25 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
       
       // 디버깅: 손 감지 결과 로그
       if (result?.hand?.detected) {
-        console.log('[UI] 버튼 감지 결과:', {
-          detected: result.hand.detected,
-          allDetections: result.hand.allDetections?.length || 0,
-          firstDetection: result.hand.allDetections?.[0],
+      console.log('[UI] ✅ 버튼 감지 결과:', {
+        detected: result.hand.detected,
+        allDetections: result.hand.allDetections?.length || 0,
+      });
+      
+      if (result.hand.allDetections && result.hand.allDetections.length > 0) {
+        console.log('[UI] 📦 감지된 객체들:');
+        result.hand.allDetections.forEach((det, idx) => {
+          console.log(`  [${idx}] ${det.className}: conf=${(det.confidence * 100).toFixed(1)}% bbox=(${Math.round(det.bbox.x)}, ${Math.round(det.bbox.y)}, ${Math.round(det.bbox.width)}x${Math.round(det.bbox.height)})`);
         });
-        
-        if (result.hand.allDetections && result.hand.allDetections.length > 0) {
-          console.log('[UI] 첫 번째 바운딩 박스:', result.hand.allDetections[0].bbox);
-        }
-      } else {
-        console.log('[UI] 버튼 감지 안됨');
+        console.log('[UI] 화면 크기 (픽셀):', {
+          width: SCREEN_WIDTH,
+          height: SCREEN_HEIGHT,
+          dp: `${SCREEN_WIDTH_DP}x${SCREEN_HEIGHT_DP}`,
+        });
       }
+    } else {
+      console.log('[UI] ❌ 버튼 감지 안됨');
+    }
       
       // 포즈 품질 체크
       if (result?.pose?.status === 'FAIL') {
@@ -137,22 +144,23 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
         setCurrentTemp(temp);
         
         // ⭐ Arduino에서 전송한 state 값으로만 판단
-        if (packet.temperature.state) {
-          console.log('[CookingScreen] ✅ Arduino state:', packet.temperature.state);
-          setTempState(packet.temperature.state);
-        } else {
-          console.warn('[CookingScreen] ⚠️ state 정보 없음, 기본값 safe 사용');
-          setTempState('safe');
+        const state = packet.temperature.state || 'safe';
+        console.log('[CookingScreen] ✅ Arduino state:', state);
+        setTempState(state);
+        
+        // state가 'hot'이면 음성 안내 (5초마다)
+        if (state === 'hot') {
+          safetyService.announceHeat();
         }
         
-        // 버너 상태 업데이트 (기존 로직 유지)
+        // 버너 상태 업데이트 (state 기반)
         if (packet.temperature.burners) {
           console.log('[CookingScreen] 버너 온도:', packet.temperature.burners);
           Object.entries(packet.temperature.burners).forEach(([position, temp]) => {
             if (temp !== undefined) {
               updateBurner(position as any, {
                 temperature: temp,
-                hasResidualHeat: temp >= systemConfig.residualHeatThreshold,
+                hasResidualHeat: state === 'hot', // state 기반으로 판단
               });
             }
           });
@@ -215,9 +223,17 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
         />
       )}
       
-      {/* 캡쳐된 이미지 뷰 - 정사각형으로 제한 */}
+      {/* YOLO 디버그 이미지 (바운딩 박스 포함) 또는 원본 이미지 뷰 */}
       <View style={styles.cameraContainer}>
-        {latestCapturedImage ? (
+        {latestVisionResult?.hand?.debugImagePath ? (
+          // YOLO 바운딩 박스가 그려진 디버그 이미지
+          <Image
+            source={{ uri: latestVisionResult.hand.debugImagePath }}
+            style={styles.squareCamera}
+            resizeMode="cover"
+          />
+        ) : latestCapturedImage ? (
+          // 원본 이미지 (YOLO 처리 전)
           <Image
             source={{ uri: latestCapturedImage }}
             style={styles.squareCamera}
@@ -230,14 +246,14 @@ export const CookingScreen: React.FC<CookingScreenProps> = ({ navigation }) => {
         )}
       </View>
 
-      {/* YOLO 바운딩 박스 오버레이 - 카메라 영역에만 표시 */}
-      {latestVisionResult?.hand?.detected && latestVisionResult.hand.allDetections && latestVisionResult.hand.allDetections.length > 0 && (
+      {/* 바운딩 박스 오버레이는 이제 사용하지 않음 (이미지에 직접 그려짐) */}
+      {false && latestVisionResult?.hand?.detected && latestVisionResult.hand.allDetections && latestVisionResult.hand.allDetections.length > 0 && (
         <View style={styles.boundingBoxSquareContainer}>
           {latestVisionResult.hand.allDetections.map((detection, idx) => {
-            // YOLO는 640x640 정사각형으로 추론하고 픽셀 좌표 반환
-            // 640x640 좌표를 화면 크기(dp)로 스케일링
-            const YOLO_SIZE = 640;
-            const scale = SCREEN_WIDTH_DP / YOLO_SIZE;
+            // VisionService는 원본 이미지 픽셀 좌표로 반환
+            // 원본 이미지는 정사각형(center crop)이므로 짧은 쪽을 기준으로 스케일
+            const imageSize = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT); // 원본 정사각형 크기
+            const scale = SCREEN_WIDTH_DP / imageSize; // 픽셀 -> dp 변환
             
             const left = detection.bbox.x * scale;
             const top = detection.bbox.y * scale;

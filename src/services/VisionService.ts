@@ -33,11 +33,12 @@ export class VisionService {
   private yoloSession?: InferenceSession;
   private modelLoaded: boolean = false;
   private readonly MODEL_INPUT_SIZE = 640; // YOLOv10 입력 크기
-  private readonly CONFIDENCE_THRESHOLD = 0.5; // 신뢰도 임계값
+  private readonly CONFIDENCE_THRESHOLD = APP_CONFIG.YOLO_CONFIDENCE_THRESHOLD; // constants.ts에서 가져옴
   private readonly IOU_THRESHOLD = 0.45; // NMS IOU 임계값
   private readonly CLASS_NAMES = ['lock', 'timer', 'down', 'up', 'power', 'fingertip', 'segment']; // 인덕션 버튼 클래스 (6개)
 
   private constructor() {
+    console.log('[VISION] VisionService 초기화 시작');
     this.initializeModel();
   }
 
@@ -272,7 +273,9 @@ export class VisionService {
    */
   private async detectHandFromImage(imageUri: string, orientation?: string): Promise<HandDetection> {
     try {
-      console.log('[YOLO] 이미지에서 버튼 감지 시작:', imageUri, 'orientation:', orientation);
+      console.log('[YOLO] ========== 버튼 감지 시작 ==========');
+      console.log('[YOLO] 이미지:', imageUri);
+      console.log('[YOLO] Orientation:', orientation);
 
       // orientation 정보를 네이티브 모듈에 전달 (undefined 대신 null 사용)
       const result = await ImageProcessor.decodeImageFromUri(
@@ -282,20 +285,18 @@ export class VisionService {
         orientation || 'portrait'
       );
 
-      console.log('[YOLO] 네이티브 모듈로 이미지 로드 완료:', {
-        width: result.width,
-        height: result.height,
-        dataLength: result.data.length,
-        cropInfo: result.cropX !== undefined ? {
-          cropX: result.cropX,
-          cropY: result.cropY,
-          cropSize: result.cropSize,
-          originalSize: `${result.originalWidth}x${result.originalHeight}`
-        } : 'none'
-      });
+      console.log('[YOLO] ✅ 네이티브 모듈로 이미지 로드 완료');
+      console.log('[YOLO] 이미지 크기:', `${result.width}x${result.height}`);
+      console.log('[YOLO] RGB 데이터 길이:', result.data.length, '(예상:', 640*640*3, ')');
+      console.log('[YOLO] 원본:', `${result.originalWidth}x${result.originalHeight}`);
+      console.log('[YOLO] Crop:', result.cropX !== undefined ? 
+        `${result.cropSize}x${result.cropSize} at (${result.cropX}, ${result.cropY})` : 'none');
 
-      // Float32Array로 변환하여 텐서 생성
-      const inputData = new Float32Array(result.data);
+      // Float32Array로 변환하고 0-1로 정규화
+      const inputData = new Float32Array(result.data.length);
+      for (let i = 0; i < result.data.length; i++) {
+        inputData[i] = result.data[i] / 255.0;
+      }
       const inputTensor = new Tensor('float32', inputData, [1, 3, this.MODEL_INPUT_SIZE, this.MODEL_INPUT_SIZE]);
 
       // YOLO 추론 실행
@@ -312,11 +313,12 @@ export class VisionService {
       
       console.log('[YOLO] 추론 완료, 출력 shape:', outputTensor.dims);
 
-      // 후처리 (네이티브 NMS 사용)
+      // 후처리 (네이티브 NMS 사용) - 640x640 기준 좌표로 변환
       const detections = await this.postprocessOutput(
         outputTensor,
-        this.MODEL_INPUT_SIZE,
-        this.MODEL_INPUT_SIZE
+        640,  // YOLO 출력 이미지는 항상 640x640
+        640,
+        undefined  // crop offset은 사용하지 않음
       );
       
       if (detections.length === 0) {
@@ -325,10 +327,53 @@ export class VisionService {
       }
 
       // 감지된 모든 버튼 로그
-      console.log(`[YOLO] ${detections.length}개 버튼 감지됨:`);
+      console.log(`[YOLO] ✅ ${detections.length}개 버튼 감지됨:`);
       detections.forEach((det, idx) => {
-        console.log(`  [${idx}] ${det.className}: ${(det.confidence * 100).toFixed(1)}% at (${Math.round(det.bbox.centerX)}, ${Math.round(det.bbox.centerY)})`);
+        console.log(`  [${idx}] ${det.className}: ${(det.confidence * 100).toFixed(1)}% bbox=(${Math.round(det.bbox.x)}, ${Math.round(det.bbox.y)}) size=(${Math.round(det.bbox.width)}x${Math.round(det.bbox.height)})`);
       });
+      
+      // 원본 이미지 크기 정보 로그
+      console.log('[YOLO] 이미지 크기 정보:', {
+        original: `${result.originalWidth}x${result.originalHeight}`,
+        crop: result.cropSize ? `${result.cropSize}x${result.cropSize} at (${result.cropX}, ${result.cropY})` : 'none',
+        model: `${this.MODEL_INPUT_SIZE}x${this.MODEL_INPUT_SIZE}`,
+      });
+      
+      // 바운딩 박스가 그려진 디버그 이미지 생성
+      let debugImagePath: string | undefined;
+      try {
+        console.log('[YOLO] 디버그 이미지 생성 시작...');
+        
+        // 1. 회전되고 crop된 640x640 이미지 저장
+        const rotatedImagePath = `file://${FileSystem.cacheDirectory}yolo_rotated_${Date.now()}.jpg`;
+        console.log('[YOLO] 회전/Crop 이미지 저장 중:', rotatedImagePath);
+        
+        await ImageProcessor.saveRotatedCroppedImage(
+          imageUri, 
+          orientation || 'portrait', 
+          rotatedImagePath,
+          {
+            cropX: result.cropX || 0,
+            cropY: result.cropY || 0,
+            cropSize: result.cropSize || this.MODEL_INPUT_SIZE
+          }
+        );
+        console.log('[YOLO] ✅ 회전/Crop 이미지 저장 완료');
+        
+        // 2. 640x640 이미지에 바운딩 박스 그리기
+        const outputPath = `file://${FileSystem.cacheDirectory}yolo_debug_${Date.now()}.jpg`;
+        console.log('[YOLO] 바운딩 박스 그리기 시작:', detections.length, '개');
+        
+        debugImagePath = await ImageProcessor.drawBoundingBoxes(
+          rotatedImagePath,
+          detections,
+          outputPath
+        );
+        console.log('[YOLO] ✅✅✅ 디버그 이미지 생성 완료:', debugImagePath);
+      } catch (error) {
+        console.error('[YOLO] ❌ 디버그 이미지 생성 실패:', error);
+        console.error('[YOLO] Error details:', JSON.stringify(error));
+      }
       
       const primary = detections[0];
       const position = {
@@ -353,6 +398,7 @@ export class VisionService {
         onBurner,
         timestamp: Date.now(),
         allDetections: detections,
+        debugImagePath, // 바운딩 박스가 그려진 이미지 경로
       };
     } catch (error) {
       console.error('[YOLO] 이미지에서 버튼 감지 실패:', error);
@@ -493,8 +539,11 @@ export class VisionService {
         dataLength: result.data.length,
       });
       
-      // Float32Array로 변환
-      const inputData = new Float32Array(result.data);
+      // Float32Array로 변환하고 0-1로 정규화
+      const inputData = new Float32Array(result.data.length);
+      for (let i = 0; i < result.data.length; i++) {
+        inputData[i] = result.data[i] / 255.0;
+      }
       
       return new Tensor('float32', inputData, [1, 3, inputSize, inputSize]);
     } catch (error) {
@@ -528,7 +577,8 @@ export class VisionService {
   private async postprocessOutput(
     output: Tensor,
     originalWidth: number,
-    originalHeight: number
+    originalHeight: number,
+    cropInfo?: { cropX: number; cropY: number; cropSize: number }
   ): Promise<YOLODetection[]> {
     const detections: YOLODetection[] = [];
     
@@ -560,18 +610,40 @@ export class VisionService {
             const width = x2 - x1;
             const height = y2 - y1;
             
-            // 좌표가 정규화되어 있다면 원본 크기로 스케일링
-            const scaleX = originalWidth / this.MODEL_INPUT_SIZE;
-            const scaleY = originalHeight / this.MODEL_INPUT_SIZE;
+            // crop 정보를 고려한 좌표 변환
+            let finalX, finalY, finalWidth, finalHeight;
+            
+            if (cropInfo) {
+              // 1. MODEL_INPUT_SIZE (640) -> cropSize로 스케일
+              const scale = cropInfo.cropSize / this.MODEL_INPUT_SIZE;
+              const croppedX = x1 * scale;
+              const croppedY = y1 * scale;
+              const croppedW = width * scale;
+              const croppedH = height * scale;
+              
+              // 2. crop offset 추가하여 원본 이미지 좌표로 변환
+              finalX = croppedX + cropInfo.cropX;
+              finalY = croppedY + cropInfo.cropY;
+              finalWidth = croppedW;
+              finalHeight = croppedH;
+            } else {
+              // crop 정보 없으면 직접 스케일링
+              const scaleX = originalWidth / this.MODEL_INPUT_SIZE;
+              const scaleY = originalHeight / this.MODEL_INPUT_SIZE;
+              finalX = x1 * scaleX;
+              finalY = y1 * scaleY;
+              finalWidth = width * scaleX;
+              finalHeight = height * scaleY;
+            }
             
             detections.push({
               bbox: {
-                x: x1 * scaleX,
-                y: y1 * scaleY,
-                width: width * scaleX,
-                height: height * scaleY,
-                centerX: (x1 + width / 2) * scaleX,
-                centerY: (y1 + height / 2) * scaleY,
+                x: finalX,
+                y: finalY,
+                width: finalWidth,
+                height: finalHeight,
+                centerX: finalX + finalWidth / 2,
+                centerY: finalY + finalHeight / 2,
               },
               confidence,
               class: classId,
@@ -647,17 +719,39 @@ export class VisionService {
         
         // 신뢰도 임계값 체크
         if (maxConfidence > this.CONFIDENCE_THRESHOLD) {
-          // 좌표 변환: 모델 입력 -> 원본 프레임
-          const scaleX = originalWidth / this.MODEL_INPUT_SIZE;
-          const scaleY = originalHeight / this.MODEL_INPUT_SIZE;
+          // crop 정보를 고려한 좌표 변환
+          let finalX, finalY, finalWidth, finalHeight;
+          
+          if (cropInfo) {
+            // 1. MODEL_INPUT_SIZE (640) -> cropSize로 스케일
+            const scale = cropInfo.cropSize / this.MODEL_INPUT_SIZE;
+            const croppedX = (cx - w / 2) * scale;
+            const croppedY = (cy - h / 2) * scale;
+            const croppedW = w * scale;
+            const croppedH = h * scale;
+            
+            // 2. crop offset 추가하여 원본 이미지 좌표로 변환
+            finalX = croppedX + cropInfo.cropX;
+            finalY = croppedY + cropInfo.cropY;
+            finalWidth = croppedW;
+            finalHeight = croppedH;
+          } else {
+            // crop 정보 없으면 직접 스케일링
+            const scaleX = originalWidth / this.MODEL_INPUT_SIZE;
+            const scaleY = originalHeight / this.MODEL_INPUT_SIZE;
+            finalX = (cx - w / 2) * scaleX;
+            finalY = (cy - h / 2) * scaleY;
+            finalWidth = w * scaleX;
+            finalHeight = h * scaleY;
+          }
           
           boxes.push([
-            (cx - w / 2) * scaleX,  // x
-            (cy - h / 2) * scaleY,  // y
-            w * scaleX,             // width
-            h * scaleY,             // height
-            maxConfidence,          // confidence
-            maxClass                // class
+            finalX,         // x
+            finalY,         // y
+            finalWidth,     // width
+            finalHeight,    // height
+            maxConfidence,  // confidence
+            maxClass        // class
           ]);
         }
       }
@@ -710,7 +804,19 @@ export class VisionService {
   }
 
   private matchBurnerRegion(position: { x: number; y: number }): BurnerPosition | undefined {
-    // TODO: 버너 영역 정의 및 매칭
+    // 1구 인덕션 - 화면 중앙 영역을 버너로 정의
+    // 640x640 이미지에서 중앙 400x400 영역을 버너로 간주
+    const minX = 120;
+    const maxX = 520;
+    const minY = 120;
+    const maxY = 520;
+    
+    if (position.x >= minX && position.x <= maxX && 
+        position.y >= minY && position.y <= maxY) {
+      console.log('[VISION] 손이 버너 위에 있음');
+      return BurnerPosition.FRONT_LEFT; // 1구 인덕션이므로 FRONT_LEFT 사용
+    }
+    
     return undefined;
   }
 

@@ -86,8 +86,6 @@ const defaultAccessibilitySettings: AccessibilitySettings = {
   ttsEnabled: true,
   ttsLanguage: 'ko',
   ttsSpeed: 1.0,
-  vibrationEnabled: true,
-  vibrationIntensity: 'medium',
   largeButtons: true,
   highContrast: false,
 };

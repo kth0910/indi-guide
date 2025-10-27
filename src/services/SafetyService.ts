@@ -46,34 +46,24 @@ export class SafetyService {
       return alerts;
     }
 
-    // 손이 뜨거운 버너 위에 있는 경우 (5초마다 한 번 알림)
-    if (hand.onBurner) {
-      const burner = burners.find((b) => b.position === hand.onBurner);
-      if (burner && (burner.isActive || burner.hasResidualHeat)) {
-        const alertKey = `heat_${hand.onBurner}`;
-        
-        // 5초마다 한 번씩만 알림
-        if (this.shouldCreateAlert(alertKey, 5000)) {
-          const alert: SafetyAlert = {
-            level: AlertLevel.WARNING,
-            message: ALERT_MESSAGES.RESIDUAL_HEAT,
-            burner: hand.onBurner,
-            timestamp: Date.now(),
-          };
-          alerts.push(alert);
-          
-          // 경고 음성
-          this.accessibilityService.speak(alert.message);
-        }
-      }
+    // 1구 인덕션: fingertip이 감지되면 무조건 FRONT_LEFT 버너 체크
+    const targetBurner = burners.find((b) => b.position === BurnerPosition.FRONT_LEFT);
+    const isHotDetected = targetBurner && (targetBurner.isActive || targetBurner.hasResidualHeat);
+    
+    if (isHotDetected) {
+      // 열이 감지되어도 토스트 알림은 표시하지 않음 (음성만 재생)
+      // announceHeat()는 CookingScreen에서 블루투스 데이터 수신 시 호출
+      
+      // 열이 감지되면 버튼 안내는 스킵 (열 경고가 우선)
+      return alerts;
     }
 
-    // 손이 버튼 위에 있는 경우 (정보 안내)
+    // 손이 버튼 위에 있는 경우 (정보 안내) - 열이 없을 때만
     if (hand.onButton) {
       this.accessibilityService.speak(`손이 ${hand.onButton} 위에 있습니다.`);
     }
 
-    // 손이 버튼 아래에 있는지 체크
+    // 손이 버튼 아래에 있는지 체크 - 열이 없을 때만
     if (hand.allDetections && hand.allDetections.length > 0) {
       const belowButtonAlerts = this.checkHandBelowButtons(hand.allDetections);
       alerts.push(...belowButtonAlerts);
@@ -161,6 +151,18 @@ export class SafetyService {
     }
 
     return alerts;
+  }
+
+  /**
+   * 열 감지 음성 안내 (5초마다 한 번) - 토스트 알림 없이 음성만
+   */
+  announceHeat(): void {
+    const alertKey = 'heat_announcement';
+    
+    if (this.shouldCreateAlert(alertKey, 5000)) {
+      // 음성만 재생, Alert는 생성하지 않음
+      this.accessibilityService.speak(ALERT_MESSAGES.RESIDUAL_HEAT, true);
+    }
   }
 
   /**

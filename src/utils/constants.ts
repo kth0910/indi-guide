@@ -24,7 +24,7 @@ export const APP_CONFIG = {
   // YOLOv10 설정
   YOLO_MODEL_PATH: '../../assets/yolo_model.onnx',
   YOLO_INPUT_SIZE: 640,
-  YOLO_CONFIDENCE_THRESHOLD: 0.5,
+  YOLO_CONFIDENCE_THRESHOLD: 0.5,  // fingertip 감지를 위해 낮춤
   YOLO_IOU_THRESHOLD: 0.45,
   YOLO_CLASS_NAMES: ['hand'], // 학습된 클래스 이름
   

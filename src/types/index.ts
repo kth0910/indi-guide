@@ -90,6 +90,7 @@ export interface HandDetection {
   onBurner?: BurnerPosition;        // 버너 위 여부
   timestamp: number;
   allDetections?: YOLODetection[];  // 감지된 모든 버튼 정보
+  debugImagePath?: string;          // 바운딩 박스가 그려진 디버그 이미지 경로
 }
 
 // 마커 인식 및 포즈 품질
